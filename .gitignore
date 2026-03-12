@@ -1,0 +1,9 @@
+.direnv
+
+bin/
+Debug/
+obj/
+Release/
+TestResults/
+x64/
+x86/
