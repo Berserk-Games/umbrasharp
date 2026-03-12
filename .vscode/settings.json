@@ -1,0 +1,6 @@
+{
+	"dotrush.roslyn.projectOrSolutionFiles": [
+		"./src/UmbraSharp.CLI/UmbraSharp.CLI.csproj",
+		"./src/UmbraSharp/UmbraSharp.csproj"
+	]
+}
