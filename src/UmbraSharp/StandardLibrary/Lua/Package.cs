@@ -1,0 +1,2 @@
+// todo: package lib
+// todo: research whether it would be feasible to load native c# modules like PUC-Rio lua/luajit load c modules (will have to look into Assembly, and might require reflection. also may need revisiting after il2cpp support is functioning)

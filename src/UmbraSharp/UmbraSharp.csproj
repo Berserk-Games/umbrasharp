@@ -6,4 +6,10 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
+
+	<ItemGroup>
+	  <PackageReference Include="VectSharp" Version="2.6.1" />
+	  <PackageReference Include="VectSharp.Raster" Version="2.5.0" />
+	  <PackageReference Include="VectSharp.SVG" Version="1.10.2" />
+	</ItemGroup>
 </Project>

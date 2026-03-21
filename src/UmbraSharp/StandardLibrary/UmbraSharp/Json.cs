@@ -1,0 +1,2 @@
+// todo: replicate moonsharp json lib but Better (while paying attention to unicode, escape sequences, negatives, etc)
+// todo: strictness that moonsharp json doesnt have (don't silently omit empty tables, fail to do userdata/functions/threads)
