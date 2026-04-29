@@ -1,9 +1,13 @@
 namespace UmbraSharp.Runtime.VirtualMachine;
 
+public sealed class Slot(Val value): UserData(0) {
+	public Val value = value;
+}
+
 internal sealed partial class VM {
 	public struct StackFrame {
 		/// the function being called
-		public readonly required Fn fn { get; init; }
+		public readonly required FnProto fn { get; init; }
 		public readonly required object? extra { get; init; }
 
 		// todo: continuations
@@ -23,10 +27,6 @@ internal sealed partial class VM {
 		public required bool root;
 		/// instruction pointer for lua code
 		public required int ip;
-	}
-
-	public sealed class Slot(Val value) {
-		public Val value = value;
 	}
 
 	public struct Reg(Val value) {
@@ -61,20 +61,20 @@ internal sealed partial class VM {
 			if (this.call_stack.Count == 0) return 0;
 			var frame = this.call_stack.Peek();
 			return frame.bp + frame.fn switch {
-				NativeFn => 0,
-				LuaFn fn => fn.args + fn.extra_regs,
+				NativeFnProto => 0,
+				Bytecode.LuaFnProto fn => fn.args + fn.extra_regs,
 				_ => 0,
 			};
 		}
 	}
 
-	private static readonly NativeFn ROOT_CALL_FN = new(
-		static (ref NativeFn.CallContext _, object _) => throw new Exception("attempt to call ROOT_CALL_FN.callee"),
+	private static readonly NativeFnProto ROOT_CALL_FN = new(
+		static (ref NativeFnProto.CallContext _, object _) => throw new Exception("attempt to call ROOT_CALL_FN.callee"),
 		"<clr>"
 	);
 
-	public StackSpan root_call(Fn fn, int args) {
-		if (this.call_stack.Count >= this.config.max_call_stack_size - 1) throw new StackOverflowException("lua call stack overflow");
+	public StackSpan root_call(FnProto fn, int args) {
+		if (this.call_stack.Count >= StaticConfig.MAX_CALL_STACK_SIZE - 1) throw new StackOverflowException("lua call stack overflow");
 
 		this.dbg.advance("root_call: before");
 
@@ -101,13 +101,13 @@ internal sealed partial class VM {
 		return default; // todo
 	}
 
-	public int nested_call(Fn fn, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
+	public int nested_call(FnProto fn, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
 		// todo: call execution loop, handle yield results (probably split yieldable calls into another function that can take a continuation)
 		return 0;
 	}
 
-	public int native_call(NativeFn fn, object extra, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
-		if (this.call_stack.Count >= this.config.max_call_stack_size - 1) throw new StackOverflowException("lua call stack overflow");
+	public int native_call(NativeFnProto fn, object extra, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
+		if (this.call_stack.Count >= StaticConfig.MAX_CALL_STACK_SIZE - 1) throw new StackOverflowException("lua call stack overflow");
 
 		this.dbg.advance("native_call: before");
 
@@ -125,7 +125,7 @@ internal sealed partial class VM {
 			ip = -1,
 		});
 
-		NativeFn.CallContext ctx = new(
+		NativeFnProto.CallContext ctx = new(
 			this,
 			new(arg_src, base_top..this.regs.top),
 			ret_dst,
@@ -146,8 +146,8 @@ internal sealed partial class VM {
 		return ctx.returned;
 	}
 
-	public void lua_begin_call(LuaFn fn, Slot[] upvars, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
-		if (this.call_stack.Count >= this.config.max_call_stack_size - 1) throw new StackOverflowException("lua call stack overflow");
+	public void lua_begin_call(Bytecode.LuaFnProto fn, Slot[] upvars, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
+		if (this.call_stack.Count >= StaticConfig.MAX_CALL_STACK_SIZE - 1) throw new StackOverflowException("lua call stack overflow");
 
 		this.dbg.advance("lua_call: before");
 

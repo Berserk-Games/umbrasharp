@@ -6,9 +6,7 @@ namespace UmbraSharp.CLI;
 
 public class Program {
 	public static void Main(string[] args) {
-		var cfg = new Config();
-		var page = new Page(4096, 4096);
-		var vm = new VM(cfg, page.Graphics);
+		var vm = VM.acquire();
 
 		vm.dbg.debug_stack();
 
@@ -44,7 +42,7 @@ public class Program {
 
 		vm.dbg.debug_stack();
 
-		vm.native_call(new NativeFn((ref NativeFn.CallContext ctx, object extra) => {
+		vm.native_call(new NativeFnProto((ref NativeFnProto.CallContext ctx, object extra) => {
 			ctx.ret(new(1));
 			ctx.ret(new(2));
 			ctx.ret(new(3));
@@ -55,6 +53,7 @@ public class Program {
 
 			vm.lua_begin_call(new() {
 				bytecode = null!,
+				dumpable = true,
 				addr = 0,
 				len = 0,
 				args = 2,
@@ -82,6 +81,6 @@ public class Program {
 
 		}, "thing"), null!, 0..0, 0..0, true);
 
-		page.SaveAsSVG("dbgdraw.svg");
+		vm.dbg.render.SaveAsSVG("dbgdraw.svg");
 	}
 }
