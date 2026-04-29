@@ -16,14 +16,14 @@ internal class Dbg {
 	private static readonly Font SMALL_FONT = new(FontFamily.ResolveFontFamily(FontFamily.StandardFontFamilies.Courier), fontSize: 20);
 
 	private readonly VM vm;
-	private readonly Graphics render;
+	public readonly Page render;
 	public int row = 0;
 
-	public Dbg(VM vm, Graphics render) {
+	public Dbg(VM vm, Page render) {
 		this.vm = vm;
 		this.render = render;
 
-		this.render.FillRectangle(new(), new(10000, 10000), Dbg.BACKGROUND);
+		this.render.Graphics.FillRectangle(new(), new(10000, 10000), Dbg.BACKGROUND);
 	}
 
 	private Point center(int col, int row_offset = 0) => new(
@@ -66,7 +66,7 @@ internal class Dbg {
 	}
 
 	public void notify_event(string evt) {
-		this.render.FillText(this.center(0) - new Point(160, 128 + 12), evt, Dbg.FONT, Dbg.EVENT);
+		this.render.Graphics.FillText(this.center(0) - new Point(160, 128 + 12), evt, Dbg.FONT, Dbg.EVENT);
 	}
 
 	public void debug_stack() {
@@ -75,14 +75,14 @@ internal class Dbg {
 
 		for (var i = 0; i < this.vm.regs.top; i++) {
 			var center = this.center(i);
-			this.render.StrokeRectangle(
+			this.render.Graphics.StrokeRectangle(
 				center - new Point(REG_OFFSET, REG_OFFSET),
 				new(REG_SIZE, REG_SIZE), Dbg.REGISTER,
 				4,
 				LineCaps.Round,
 				LineJoins.Round
 			);
-			this.render.FillText(
+			this.render.Graphics.FillText(
 				center - new Point(36, 7),
 				this.vm.regs.data[i].ToString(),
 				Dbg.SMALL_FONT,
@@ -98,7 +98,7 @@ internal class Dbg {
 
 		var depth = 0;
 		foreach (var frame in this.vm.call_stack) {
-			var col = frame.fn is LuaFn ? Dbg.LUA_FRAME : Dbg.NATIVE_FRAME;
+			var col = frame.fn is Bytecode.LuaFnProto ? Dbg.LUA_FRAME : Dbg.NATIVE_FRAME;
 
 			var bp = this.center(frame.bp);
 
@@ -110,7 +110,7 @@ internal class Dbg {
 			);
 			var used_regs = 0;
 			switch (frame.fn) {
-				case NativeFn fn:
+				case NativeFnProto fn:
 					this.line(
 						bp - offset,
 						bp - offset + new Point(0, CS_SIZE),
@@ -118,9 +118,9 @@ internal class Dbg {
 						8
 					);
 					break;
-				case LuaFn fn:
+				case Bytecode.LuaFnProto fn:
 					used_regs = fn.args + fn.extra_regs;
-					this.render.StrokeRectangle(
+					this.render.Graphics.StrokeRectangle(
 						bp - offset,
 						new Size(CS_SIZE * used_regs, CS_SIZE),
 						col,
@@ -137,9 +137,9 @@ internal class Dbg {
 					);
 					break;
 			}
-			this.render.FillText(
+			this.render.Graphics.FillText(
 				bp - offset - new Point(8, 30),
-				$"{(frame.fn is NativeFn ? "native" : "lua")}:{frame.fn.debug_name}",
+				$"{(frame.fn is NativeFnProto ? "native" : "lua")}:{frame.fn.debug_name}",
 				Dbg.FONT,
 				col
 			);
@@ -156,7 +156,7 @@ internal class Dbg {
 		}
 	}
 
-	private void line(Point src, Point dst, Brush brush, int width) => this.render.StrokePath(
+	private void line(Point src, Point dst, Brush brush, int width) => this.render.Graphics.StrokePath(
 		new GraphicsPath().MoveTo(src).LineTo(dst),
 		brush,
 		width,

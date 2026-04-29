@@ -3,15 +3,17 @@ using VectSharp;
 namespace UmbraSharp.Runtime.VirtualMachine;
 
 internal sealed partial class VM {
-	internal readonly Dbg dbg;
-	internal readonly Config config;
-	internal readonly Stack<StackFrame> call_stack;
-	internal readonly RegStack regs;
+	public readonly Dbg dbg;
+	public readonly Stack<StackFrame> call_stack;
+	public readonly RegStack regs;
+	public Coro? owning_coro;
 
-	public VM(Config config, Graphics render) {
+	private VM(Page render, Coro? owning_coro = null) {
+		Statistics.trace_alloc_vm();
 		this.dbg = new(this, render);
-		this.config = config;
-		this.call_stack = new(config.call_stack_size);
-		this.regs = new(config.stack_size, config.max_stack_size, this.dbg);
+		Statistics.trace_alloc_internal($"alloc -> VM.call_stack[{StaticConfig.CALL_STACK_SIZE}] + backing buf");
+		this.call_stack = new(StaticConfig.CALL_STACK_SIZE);
+		this.regs = new(StaticConfig.STACK_SIZE, StaticConfig.MAX_STACK_SIZE, this.dbg);
+		this.owning_coro = owning_coro;
 	}
 }

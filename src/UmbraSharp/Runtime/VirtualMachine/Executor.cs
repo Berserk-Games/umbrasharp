@@ -3,7 +3,7 @@ namespace UmbraSharp.Runtime.VirtualMachine;
 internal sealed partial class VM {
 	internal readonly struct Yield {
 		public readonly required StackSpan values { get; init; }
-		public readonly required NativeFn.Callee continuation { get; init; }
+		public readonly required NativeFnProto.Callee continuation { get; init; }
 		public readonly required object? extra { get; init; }
 	}
 

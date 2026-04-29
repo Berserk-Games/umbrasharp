@@ -12,7 +12,7 @@ it will _not_ be a drop in replacement for MoonSharp
 
 this project learns from the pain points of MoonSharp
 
-- performance (UmbraSharp uses structs over classes, and uses a register machine over a stack machine)
+- performance (UmbraSharp uses structs over classes, a register machine over a stack machine, and avoids allocations like the plague)
 - documentation (upon completion, UmbraSharp will have detailed documentation, including on its bytecode)
 - bytecode focus (UmbraSharp focuses on both source _and_ bytecode stability)
 - ownership (MoonSharp tracks and constantly checks the ownership of table/function/coroutine values. UmbraSharp is capable of handling values from other scripts, even within the same VM)
@@ -47,9 +47,10 @@ todo: fill all sections
 
 ### debugger
 
-- [ ] debugger protocol
+- [ ] comprehensive debugger protocol
 - [ ] implementation within the interpreter
 - [ ] client
+- [ ] debugger protocol documentation
 
 ### testing
 

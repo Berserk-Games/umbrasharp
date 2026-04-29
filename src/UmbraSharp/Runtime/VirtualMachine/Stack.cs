@@ -55,18 +55,27 @@ public readonly struct ValSpan {
 	public readonly ValSpan this[Range i] => new(this.stack, this.span[i.Start.Value]..this.span[i.End.Value]);
 }
 
-internal sealed class RegStack(int start_capacity, int max_capacity, Dbg dbg) {
-	private readonly Dbg dbg = dbg;
+internal sealed class RegStack {
+	private readonly Dbg dbg;
 
-	public readonly int max_capacity = max_capacity;
-	public VM.Reg[] data = new VM.Reg[start_capacity];
+	public readonly int max_capacity;
+	public VM.Reg[] data;
 	public int top = 0;
+
+	public RegStack(int start_capacity, int max_capacity, Dbg dbg) {
+		Statistics.trace_alloc_internal($"alloc -> RegStack");
+		this.dbg = dbg;
+		this.max_capacity = max_capacity;
+		Statistics.trace_alloc_internal($"alloc -> RegStack.data[{start_capacity}]");
+		this.data = new VM.Reg[start_capacity];
+	}
 
 	public StackSpan reserve(int n) {
 		if (n < 0) n = 0;
 		var end = this.top + n;
 		if (end >= this.data.Length) {
 			if (end >= this.max_capacity) throw new Exception("lua stack overflow");
+			Statistics.trace_alloc_internal($"alloc <-> RegStack.data[{this.data.Length * 2}] (resizing)");
 			Array.Resize(ref this.data, this.data.Length * 2);
 		}
 		return this.top..end;

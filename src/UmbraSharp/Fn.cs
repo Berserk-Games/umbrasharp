@@ -1,12 +1,13 @@
+using UmbraSharp.Runtime;
 using UmbraSharp.Runtime.VirtualMachine;
 
 namespace UmbraSharp;
 
-public abstract class Fn {
+public abstract class FnProto {
 	public abstract string debug_name { get; }
 }
 
-public sealed class NativeFn(NativeFn.Callee callee, string name): Fn {
+public sealed class NativeFnProto(NativeFnProto.Callee callee, string name): FnProto {
 	public struct CallContext {
 		internal readonly VM vm;
 		internal readonly StackSpanVar arg_src;
@@ -57,4 +58,18 @@ public sealed class NativeFn(NativeFn.Callee callee, string name): Fn {
 	public readonly string name = name;
 
 	public override string debug_name => this.name;
+}
+
+public readonly struct Fn {
+	internal readonly FnProto proto;
+	internal readonly object? extra;
+
+	internal Fn(FnProto proto, object? extra) {
+		this.proto = proto;
+		this.extra = extra;
+	}
+
+	public Fn(NativeFnProto proto, object? extra) : this((FnProto)proto, extra) { }
+
+	internal Fn(Bytecode.LuaFnProto proto, Slot[]? extra) : this((FnProto)proto, extra) { }
 }
