@@ -4,10 +4,11 @@ using UmbraSharp.Runtime.VirtualMachine;
 namespace UmbraSharp;
 
 public abstract class FnProto {
+	public abstract bool hide_from_trace { get; }
 	public abstract string debug_name { get; }
 }
 
-public sealed class NativeFnProto(NativeFnProto.Callee callee, string name): FnProto {
+public sealed class NativeFnProto(NativeFnProto.Callee callee, string name, bool hide_from_trace = false): FnProto {
 	public struct CallContext {
 		internal readonly VM vm;
 		internal readonly StackSpanVar arg_src;
@@ -29,9 +30,9 @@ public sealed class NativeFnProto(NativeFnProto.Callee callee, string name): FnP
 
 		/// get an argument
 		/// <note>arguments are invalid once a return has been pushed</note>
-		public readonly Val? arg(int i) {
+		public readonly Val arg(int i) {
 			if (this.returned != 0) throw new InvalidOperationException("cannot read arguments from NativeFn.CallContext after function has written return values");
-			return i < this.arg_src.len ? this.vm.regs.data[this.arg_src[i]].value : (Val?)null;
+			return i < this.arg_src.len ? this.vm.regs.data[this.arg_src[i]].value : default;
 		}
 
 		public void ret(Val val) {
@@ -52,17 +53,16 @@ public sealed class NativeFnProto(NativeFnProto.Callee callee, string name): FnP
 		// todo: yield
 	}
 
-	public delegate void Callee(ref CallContext ctx, object extra);
+	public delegate void Callee(ref CallContext ctx, object? extra);
 
 	public readonly Callee callee = callee;
-	public readonly string name = name;
-
-	public override string debug_name => this.name;
+	public override string debug_name { get; } = name;
+	public override bool hide_from_trace { get; } = hide_from_trace;
 }
 
 public readonly struct Fn {
-	internal readonly FnProto proto;
-	internal readonly object? extra;
+	public readonly FnProto proto;
+	public readonly object? extra;
 
 	internal Fn(FnProto proto, object? extra) {
 		this.proto = proto;
@@ -71,5 +71,5 @@ public readonly struct Fn {
 
 	public Fn(NativeFnProto proto, object? extra) : this((FnProto)proto, extra) { }
 
-	internal Fn(Bytecode.LuaFnProto proto, Slot[]? extra) : this((FnProto)proto, extra) { }
+	public Fn(ByteCode.LuaFnProto proto, Slot[] upvalues) : this((FnProto)proto, upvalues) { }
 }

@@ -1,5 +1,6 @@
 // todo: coroutines
 
+using UmbraSharp.Internal;
 using UmbraSharp.Runtime.VirtualMachine;
 
 namespace UmbraSharp;

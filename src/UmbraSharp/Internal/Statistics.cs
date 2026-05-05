@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using UmbraSharp.Runtime;
 
-namespace UmbraSharp;
+namespace UmbraSharp.Internal;
 
 /// <summary>tracks information for the purposes of developing UmbraSharp</summary>
 /// <remarks>nonfunctional in release mode</remarks>
@@ -22,6 +22,19 @@ public static class Statistics {
 		public int alloc_coro;
 		public int alloc_table;
 		public int alloc_internal;
+
+		public override readonly string ToString() => $"""
+			stats:
+				{this.instructions} instructions executed
+				{this.vm_pool_acquired} VMs acquired from the
+				{this.alloc_vm} new VMs allocated
+				{this.vm_pool_released} VMs released into the pool
+				{this.alloc_slot} upvar slots allocated
+				{this.alloc_upvalues} upvar arrays allocated
+				{this.alloc_coro} coroutines allocated
+				{this.alloc_table} tables allocated
+				{this.alloc_internal} internal allocations
+		""";
 	}
 
 	/// <summary>whether individual allocations, executed instructions should be put into the log field of captures</summary>
@@ -67,61 +80,69 @@ public static class Statistics {
 	}
 
 	[Conditional("DEBUG")]
-	internal static void trace_inst(Bytecode.Inst inst) {
-		if (Statistics.full_trace) Statistics.log.Add($"inst: {inst}");
+	internal static void trace(string msg) {
+		if (!Statistics.full_trace) return;
+		Statistics.log.Add(msg);
+		Console.Error.Write("[trace] ");
+		Console.Error.WriteLine(msg);
+	}
+
+	[Conditional("DEBUG")]
+	internal static void trace_inst(string fn, int idx, ByteCode.Inst inst) {
+		if (Statistics.full_trace) Statistics.trace($"inst [{fn}+{idx:X4}] {inst}");
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_vm_pool_acquired() {
-		if (Statistics.full_trace) Statistics.log.Add("vm pool -> acquired");
+		if (Statistics.full_trace) Statistics.trace("vm pool -> acquired");
 		Statistics.total.vm_pool_acquired++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_vm_pool_released() {
-		if (Statistics.full_trace) Statistics.log.Add("vm pool <- released");
+		if (Statistics.full_trace) Statistics.trace("vm pool <- released");
 		Statistics.total.vm_pool_released++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_alloc_vm() {
-		if (Statistics.full_trace) Statistics.log.Add("alloc -> vm");
+		if (Statistics.full_trace) Statistics.trace("alloc -> vm");
 		Statistics.total.alloc_vm++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_slot() {
-		if (Statistics.full_trace) Statistics.log.Add("alloc -> register slot");
+		if (Statistics.full_trace) Statistics.trace("alloc -> register slot");
 		Statistics.total.alloc_slot++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_alloc_upvalues() {
-		if (Statistics.full_trace) Statistics.log.Add("alloc -> lua functions upvalues");
+		if (Statistics.full_trace) Statistics.trace("alloc -> lua functions upvalues");
 		Statistics.total.alloc_upvalues++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_alloc_coro() {
-		if (Statistics.full_trace) Statistics.log.Add("alloc -> thread");
+		if (Statistics.full_trace) Statistics.trace("alloc -> thread");
 		Statistics.total.alloc_coro++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_alloc_table() {
-		if (Statistics.full_trace) Statistics.log.Add("alloc -> table");
+		if (Statistics.full_trace) Statistics.trace("alloc -> table");
 		Statistics.total.alloc_table++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void trace_alloc_internal(string kind) {
-		if (Statistics.full_trace) Statistics.log.Add(kind);
+		if (Statistics.full_trace) Statistics.trace(kind);
 		Statistics.total.alloc_internal++;
 	}
 
 	[Conditional("DEBUG")]
 	internal static void internal_warning(string err) {
 		Console.Error.WriteLine($"[UmbraSharp // INTERNAL WARNING] {err}");
-		Statistics.log.Add($"[internal warning: {err}]");
+		Statistics.trace($"internal warning: {err}");
 	}
 }

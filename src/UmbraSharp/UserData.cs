@@ -1,3 +1,5 @@
+using UmbraSharp.Internal;
+
 namespace UmbraSharp;
 
 public abstract class UserData(int uservalue_cap) {
