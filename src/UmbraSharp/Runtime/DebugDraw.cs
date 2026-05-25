@@ -97,8 +97,8 @@ internal class Dbg {
 		Point offset = new(CS_OFFSET, CS_OFFSET);
 
 		var depth = 0;
-		foreach (var frame in this.vm.call_stack) {
-			var col = frame.fn is Bytecode.LuaFnProto ? Dbg.LUA_FRAME : Dbg.NATIVE_FRAME;
+		foreach (var frame in this.vm.call_stack.enumerate_downwards()) {
+			var col = frame.fn is ByteCode.LuaFnProto ? Dbg.LUA_FRAME : Dbg.NATIVE_FRAME;
 
 			var bp = this.center(frame.bp);
 
@@ -118,7 +118,7 @@ internal class Dbg {
 						8
 					);
 					break;
-				case Bytecode.LuaFnProto fn:
+				case ByteCode.LuaFnProto fn:
 					used_regs = fn.args + fn.extra_regs;
 					this.render.Graphics.StrokeRectangle(
 						bp - offset,
@@ -139,13 +139,12 @@ internal class Dbg {
 			}
 			this.render.Graphics.FillText(
 				bp - offset - new Point(8, 30),
-				$"{(frame.fn is NativeFnProto ? "native" : "lua")}:{frame.fn.debug_name}",
+				frame.fn.debug_name,
 				Dbg.FONT,
 				col
 			);
 			if (depth++ == 0) {
 				var varret = this.vm.regs.top - (frame.bp + used_regs);
-				Console.WriteLine($"top {this.vm.regs.top}, used {used_regs}, varret {varret}");
 				this.line(
 					bp - offset + new Point(used_regs * CS_SIZE, CS_SIZE),
 					bp - offset + new Point((used_regs * CS_SIZE) + Math.Max((varret * CS_SIZE) - REDUCE_VAR_SIZE, 0), CS_SIZE),

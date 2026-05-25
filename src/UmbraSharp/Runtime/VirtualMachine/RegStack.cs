@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using UmbraSharp.Internal;
 
 namespace UmbraSharp.Runtime.VirtualMachine;
 
@@ -7,7 +8,7 @@ internal readonly record struct StackSpan(int start, int end) {
 
 	public readonly StackSpan trim(int len) => this.start..(this.start + Math.Min(len, this.len));
 
-	public override string ToString() => $"{this.start}..{this.end}";
+	public override string ToString() => this.len != 0 ? $"{this.start}..{this.end}" : "none";
 
 	public readonly int this[int i] {
 		get {
@@ -19,6 +20,7 @@ internal readonly record struct StackSpan(int start, int end) {
 	public readonly StackSpan this[Range i] => this[i.Start.Value]..this[i.End.Value];
 
 	public static implicit operator StackSpan(Range range) => new(range.Start.Value, range.End.Value);
+	public static implicit operator Range(StackSpan span) => span.start..span.end;
 }
 
 internal readonly record struct StackSpanVar(StackSpan passed, StackSpan variable) {
@@ -34,26 +36,26 @@ internal readonly record struct StackSpanVar(StackSpan passed, StackSpan variabl
 	public readonly int this[int i] => i < this.passed.len ? this.passed[i] : this.variable[i - this.passed.len];
 }
 
-// todo: figure out if we want this (it may be helpful to allow spans to be referenced so that native functions could be implemented better, but could cause issues if the user uses anything that modifies the stack while they still hold a ValSpan)
-public readonly struct ValSpan {
-	internal readonly RegStack stack;
-	internal readonly StackSpan span;
+// // todo: figure out if we want this (it may be helpful to allow spans to be referenced so that native functions could be implemented better, but could cause issues if the user uses anything that modifies the stack while they still hold a ValSpan)
+// public readonly struct ValSpan {
+// 	internal readonly RegStack stack;
+// 	internal readonly StackSpan span;
 
-	internal ValSpan(RegStack stack, StackSpan span) {
-		this.stack = stack;
-		this.span = span;
-	}
+// 	internal ValSpan(RegStack stack, StackSpan span) {
+// 		this.stack = stack;
+// 		this.span = span;
+// 	}
 
-	public readonly int len => this.span.len;
+// 	public readonly int len => this.span.len;
 
-	public readonly ValSpan trim(int len) => new(this.stack, this.span.trim(len));
+// 	public readonly ValSpan trim(int len) => new(this.stack, this.span.trim(len));
 
-	public override string ToString() => $"{this.span.start}..{this.span.end}";
+// 	public override string ToString() => $"{this.span.start}..{this.span.end}";
 
-	public readonly Val this[int i] => this.stack.data[this.span[i]].value;
+// 	public readonly Val this[int i] => this.stack.data[this.span[i]].value;
 
-	public readonly ValSpan this[Range i] => new(this.stack, this.span[i.Start.Value]..this.span[i.End.Value]);
-}
+// 	public readonly ValSpan this[Range i] => new(this.stack, this.span[i.Start.Value]..this.span[i.End.Value]);
+// }
 
 internal sealed class RegStack {
 	private readonly Dbg dbg;
@@ -98,15 +100,28 @@ internal sealed class RegStack {
 	}
 
 	public void copy_to(StackSpanVar src, StackSpanVar dst) {
-		Console.WriteLine($"{src} -> {dst}");
+		Statistics.trace($"copy {src} -> {dst}");
 
 		for (var i = 0; i < dst.len; i++) {
 			if (i < src.len) {
 				this.data[dst[i]] = this.data[src[i]].copy;
 				this.dbg.notify_copy(src[i], dst[i]);
 			} else {
-
 				this.data[dst[i]] = default;
+				this.dbg.notify_set(dst[i]);
+			}
+		}
+	}
+
+	public void copy_to_unlink(StackSpanVar src, StackSpanVar dst) {
+		Statistics.trace($"copy {src} -> {dst}");
+
+		for (var i = 0; i < dst.len; i++) {
+			if (i < src.len) {
+				this.data[dst[i]].value = this.data[src[i]].value;
+				this.dbg.notify_copy(src[i], dst[i]);
+			} else {
+				this.data[dst[i]].value = default;
 				this.dbg.notify_set(dst[i]);
 			}
 		}
@@ -115,8 +130,15 @@ internal sealed class RegStack {
 	public int push(Val val) {
 		var range = this.alloc(1);
 		this.data[range.start] = new(val);
-		dbg.notify_set(range.start);
+		this.dbg.notify_set(range.start);
 		return range.start;
+	}
+
+	public int push_reserved(Val val) {
+		var i = this.top++;
+		this.data[i] = new(val);
+		this.dbg.notify_set(i);
+		return i;
 	}
 
 	public StackSpan popn(int n) {
@@ -125,4 +147,6 @@ internal sealed class RegStack {
 		for (var i = this.top; i < top; i++) this.dbg.notify_pop(i);
 		return (top - n)..top;
 	}
+
+	public Span<VM.Reg> this[StackSpan span] => this.data.AsSpan()[(Range)span];
 }
