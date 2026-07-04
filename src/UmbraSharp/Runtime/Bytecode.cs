@@ -49,7 +49,7 @@ public class ByteCode {
 		public static implicit operator MultiReg(Range r) => new(r.Start.Value, r.End.Value);
 	}
 
-	public readonly struct Inst(Inst.OpCode opcode) {
+	public struct Inst(Inst.OpCode opcode) {
 		// todo: finalize instruction set v1
 		// todo: number all instructions after instruction set is done
 		public enum OpCode: byte {
@@ -85,6 +85,8 @@ public class ByteCode {
 			/// interpret $a as an int bitwise, then cast to long
 			/// $rx = $a
 			LdInt,
+			/// $rx = vec($ry*-[0], $ry*-[1], $ry*-[2])
+			LdVec,
 			/// $ry = format_strings[$a].construct()
 			LdFmt,
 			/// $rx = funcs[$a]
@@ -175,7 +177,7 @@ public class ByteCode {
 			Mod,
 			/// $rx = $ry- ^ $rz-
 			Pow,
-			/// $rx = -$ry-
+			/// $rx = -$ry
 			Unm,
 
 			/// $rx = $ry- & $rz-
@@ -188,13 +190,16 @@ public class ByteCode {
 			BitShl,
 			/// $rx = $ry- >> $rz-
 			BitShr,
-			/// $rx = ~$ry-
+			/// $rx = ~$ry
 			BitNot,
 
-			/// $rx = $ry*-
+			/// $rx = $ry*
 			Concat,
 			/// $rx = #$ry
 			Len,
+
+			/// $rx = not $ry
+			Not,
 
 			/// $rx = $ry- == $rz-
 			Eq,
@@ -215,14 +220,16 @@ public class ByteCode {
 			ForPrep,
 			/// do a numeric iteration step, advancing the iterator in $rx by $rz- and relative jumping to $a if the loop should continue (<= $ry-)
 			ForStep,
-			/// prepare generic iteration, ensuring that $rx (iterator) is a function, in order:
-			/// - if $rx is not a table, do nothing
-			/// - if $rx has __iter (if Luau support) or __iterator (if MoonSharp support), call that with $rx, $ry, $rz and assign its results to $rx, $ry, $rz
-			/// - if $rx has __call, do nothing
-			/// - if generalized_iteration is None, do nothing
-			/// - if generalized_iteration is Luau, copy $rx to $ry, then set $rx to the default keyed iterator
-			/// - if generalized_iteration is MoonSharp, copy $rx to $ry, then set $rx to the default keyless iterator
+			/// prepare generic iteration, ensuring that $rx*[0] (iterator) is a function, in order:
+			/// - if $rx*[0] has the __iter metamethod (if Luau support) or __iterator metamethod (if MoonSharp support), call that with $rx*[0..3] and assign its results to $rx*[0..3]
+			/// - if $rx*[0] is not a table, has the __call metamethod, or generalized iteration is disabled, do nothing
+			/// - else, copy $rx*[0] to $rx*[1], set $rx*[0] to the generalized iteration marker
 			IterPrep,
+			/// do a generic iteration step
+			/// - if $rx*[0] is the generalized iteration marker, do the default_generalized_iteration behavior, writing results to $rx*[2..]
+			/// - if $rx*[0] is a function or has the __call metamethod, call it with $rx*[0..3], writing results to $rx*[2..]
+			/// - else error
+			IterStep,
 
 			#endregion
 		}
@@ -273,6 +280,7 @@ public class ByteCode {
 			public static Inst ld_false(SingleReg rx_dst) => new(OpCode.LdFalse) { rx = rx_dst.not_const() };
 			public static Inst ld_true(SingleReg rx_dst) => new(OpCode.LdTrue) { rx = rx_dst.not_const() };
 			public static Inst ld_int(int a_int, SingleReg rx_dst) => new(OpCode.LdInt) { a = a_int, rx = rx_dst.not_const() };
+			public static Inst ld_vec(SingleReg rx_dst, MultiReg ry_components) => new(OpCode.LdVec) { rx = rx_dst.not_const(), ry = ry_components };
 			public static Inst ld_fmt(int a_fmtstr, SingleReg rx_dst) => new(OpCode.LdFmt) { a = a_fmtstr, rx = rx_dst.not_const() };
 			public static Inst ld_fn(int a_fn, SingleReg rx_dst) => new(OpCode.LdFn) { a = a_fn, rx = rx_dst.not_const() };
 			public static Inst ld_closure(int a_closure, SingleReg rx_dst) => new(OpCode.LdFn) { a = a_closure, rx = rx_dst.not_const() };
@@ -288,8 +296,11 @@ public class ByteCode {
 			public static Inst upv_index(int a_upv, SingleReg rx_dst, MultiReg ry_index) => new(OpCode.UpvIndex) { a = a_upv, rx = rx_dst.not_const(), ry = ry_index };
 			public static Inst upv_index_set(int a_upv, SingleReg rx_src, MultiReg ry_index) => new(OpCode.UpvIndexSet) { a = a_upv, rx = rx_src, ry = ry_index };
 
-			public static Inst jump(int a_dst_rel) => new(OpCode.Jmp) { a = a_dst_rel };
-			public static Inst jump_dyn(SingleReg rx_dst_rel) => new(OpCode.JmpDyn) { rx = rx_dst_rel };
+			public static Inst jmp(int a_dst_rel) => new(OpCode.Jmp) { a = a_dst_rel };
+			public static Inst jmp_dyn(SingleReg rx_dst_rel) => new(OpCode.JmpDyn) { rx = rx_dst_rel };
+			public static Inst jmp_nil(int a_dst_rel, SingleReg rx_test) => new(OpCode.JmpNil) { a = a_dst_rel, rx = rx_test.not_const() };
+			public static Inst jmp_true(int a_dst_rel, SingleReg rx_test) => new(OpCode.JmpTrue) { a = a_dst_rel, rx = rx_test.not_const() };
+			public static Inst jmp_false(int a_dst_rel, SingleReg rx_test) => new(OpCode.JmpFalse) { a = a_dst_rel, rx = rx_test.not_const() };
 			public static Inst ret(MultiReg rx_rets) => new(OpCode.Ret) { rx = rx_rets.not_const() };
 
 			public static Inst call(bool alt_accept_varret, int a_fn, MultiReg rx_args, MultiReg ry_rets) => new(OpCode.Call) { alt = alt_accept_varret, a = a_fn, rx = rx_args.not_const(), ry = ry_rets.not_const() };
@@ -304,17 +315,19 @@ public class ByteCode {
 			public static Inst div_floor(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.DivFloor) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
 			public static Inst mod(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.Mod) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
 			public static Inst pow(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.Pow) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
-			public static Inst unm(SingleReg rx_dst, SingleReg ry_operand) => new(OpCode.Unm) { rx = rx_dst.not_const(), ry = ry_operand };
+			public static Inst unm(SingleReg rx_dst, SingleReg ry_operand) => new(OpCode.Unm) { rx = rx_dst.not_const(), ry = ry_operand.not_const() };
 
 			public static Inst bit_and(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.BitAnd) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
 			public static Inst bit_or(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.BitOr) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
 			public static Inst bit_xor(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.BitXor) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
 			public static Inst bit_shl(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.BitShl) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
 			public static Inst bit_shr(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.BitShr) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
-			public static Inst bit_not(SingleReg rx_dst, SingleReg ry_operand) => new(OpCode.BitNot) { rx = rx_dst.not_const(), ry = ry_operand };
+			public static Inst bit_not(SingleReg rx_dst, SingleReg ry_operand) => new(OpCode.BitNot) { rx = rx_dst.not_const(), ry = ry_operand.not_const() };
 
-			public static Inst concat(SingleReg rx_dst, MultiReg ry_operands) => new(OpCode.Concat) { rx = rx_dst.not_const(), ry = ry_operands };
+			public static Inst concat(SingleReg rx_dst, MultiReg ry_operands) => new(OpCode.Concat) { rx = rx_dst.not_const(), ry = ry_operands.not_const() };
 			public static Inst len(SingleReg rx_dst, SingleReg ry_operand) => new(OpCode.Len) { rx = rx_dst.not_const(), ry = ry_operand.not_const() };
+
+			public static Inst not(SingleReg rx_dst, SingleReg ry_operand) => new(OpCode.Not) { rx = rx_dst.not_const(), ry = ry_operand.not_const() };
 
 			public static Inst eq(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.Eq) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
 			public static Inst lt(SingleReg rx_dst, SingleReg ry_lhs, SingleReg rz_rhs) => new(OpCode.Lt) { rx = rx_dst.not_const(), ry = ry_lhs, rz = rz_rhs };
@@ -325,7 +338,8 @@ public class ByteCode {
 
 			public static Inst for_prep(SingleReg rx_initial, SingleReg ry_limit, SingleReg rz_step) => new(OpCode.ForPrep) { rx = rx_initial.not_const(), ry = ry_limit, rz = rz_step };
 			public static Inst for_step(int a_dst_rel, SingleReg rx_value, SingleReg ry_limit, SingleReg rz_step) => new(OpCode.ForStep) { a = a_dst_rel, rx = rx_value.not_const(), ry = ry_limit, rz = rz_step };
-			public static Inst iter_prep(SingleReg rx_iter, SingleReg ry_context, SingleReg rz_index) => new(OpCode.IterPrep) { rx = rx_iter.not_const(), ry = ry_context.not_const(), rz = rz_index.not_const() };
+			public static Inst iter_prep(MultiReg rx_vars) => new(OpCode.IterPrep) { rx = rx_vars.not_const() };
+			public static Inst iter_step(MultiReg rx_vars) => new(OpCode.IterStep) { rx = rx_vars.not_const() };
 		}
 
 		public static string name(OpCode op) => op switch {
@@ -341,6 +355,7 @@ public class ByteCode {
 			OpCode.LdFalse => "ld.false",
 			OpCode.LdTrue => "ld.true",
 			OpCode.LdInt => "ld.int",
+			OpCode.LdVec => "ld.vec",
 			OpCode.LdFmt => "ld.fmt",
 			OpCode.LdFn => "ld.fn",
 			OpCode.LdClosure => "ld.closure",
@@ -387,6 +402,8 @@ public class ByteCode {
 			OpCode.Concat => "op.concat",
 			OpCode.Len => "op.len",
 
+			OpCode.Not => "op.not",
+
 			OpCode.Eq => "cmp.eq",
 			OpCode.Lt => "cmp.lt",
 			OpCode.Le => "cmp.le",
@@ -397,6 +414,7 @@ public class ByteCode {
 			OpCode.ForPrep => "for.prep",
 			OpCode.ForStep => "for.step",
 			OpCode.IterPrep => "iter.prep",
+			OpCode.IterStep => "iter.step",
 
 			_ => throw new ArgumentOutOfRangeException($"unknown opcode {op} (0x{(int)op:02x})"),
 		};
@@ -416,6 +434,7 @@ public class ByteCode {
 				OpCode.LdFalse => (U.RX),
 				OpCode.LdTrue => (U.RX),
 				OpCode.LdInt => U.A | (U.RX),
+				OpCode.LdVec => (U.RX) | (U.RY | U.RYMulti | U.RYConst),
 				OpCode.LdFmt => U.A | (U.RX),
 				OpCode.LdFn => U.A | (U.RX),
 				OpCode.LdClosure => U.A | (U.RX),
@@ -450,17 +469,19 @@ public class ByteCode {
 				OpCode.DivFloor => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.Mod => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.Pow => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
-				OpCode.Unm => (U.RX) | (U.RY | U.RYConst),
+				OpCode.Unm => (U.RX) | (U.RY),
 
 				OpCode.BitAnd => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.BitOr => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.BitXor => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.BitShl => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.BitShr => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
-				OpCode.BitNot => (U.RX) | (U.RY | U.RYConst),
+				OpCode.BitNot => (U.RX) | (U.RY),
 
-				OpCode.Concat => (U.RX) | (U.RY | U.RYMulti | U.RYConst),
+				OpCode.Concat => (U.RX) | (U.RY | U.RYMulti),
 				OpCode.Len => (U.RX) | (U.RY),
+
+				OpCode.Not => (U.RX) | (U.RY),
 
 				OpCode.Eq => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.Lt => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
@@ -471,7 +492,8 @@ public class ByteCode {
 
 				OpCode.ForPrep => (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
 				OpCode.ForStep => U.A | (U.RX) | (U.RY | U.RYConst) | (U.RZ | U.RZConst),
-				OpCode.IterPrep => (U.RX) | (U.RY) | (U.RZ),
+				OpCode.IterPrep => (U.RX | U.RXMulti),
+				OpCode.IterStep => (U.RX | U.RXMulti),
 
 				_ => throw new ArgumentOutOfRangeException($"unknown opcode {op} (0x{(int)op:02x})"),
 			};
@@ -492,32 +514,34 @@ public class ByteCode {
 		/// register index/span $ry
 		public readonly MultiReg rz { get; init; }
 
+		/// cache for indexing
+		public int? cache;
+
 		/// arbitrary source offset
 		public readonly uint? src { get; init; }
 
-		private static readonly StringBuilder tostring_buf = new(32);
-		public override string ToString() {
-			Inst.tostring_buf.Clear();
-			Inst.tostring_buf.Append(Inst.name(this.opcode));
+		public override readonly string ToString() {
+			var b = StringBuilderPool.acquire();
+			b.Append(Inst.name(this.opcode));
 			var usage = Inst.usage(this.opcode);
-			if ((usage & U.Alt) != 0 && this.alt) Inst.tostring_buf.Append(".*");
+			if ((usage & U.Alt) != 0 && this.alt) b.Append(".*");
 			if ((usage & U.A) != 0) {
-				Inst.tostring_buf.Append(' ');
-				Inst.tostring_buf.Append(this.a);
+				b.Append(' ');
+				b.Append(this.a);
 			}
 			if ((usage & U.RX) != 0) {
-				Inst.tostring_buf.Append(' ');
-				Inst.tostring_buf.Append(this.rx);
+				b.Append(' ');
+				b.Append(this.rx);
 			}
 			if ((usage & U.RY) != 0) {
-				Inst.tostring_buf.Append(' ');
-				Inst.tostring_buf.Append(this.ry);
+				b.Append(' ');
+				b.Append(this.ry);
 			}
 			if ((usage & U.RZ) != 0) {
-				Inst.tostring_buf.Append(' ');
-				Inst.tostring_buf.Append(this.rz);
+				b.Append(' ');
+				b.Append(this.rz);
 			}
-			return Inst.tostring_buf.ToString();
+			return StringBuilderPool.release_tostring(b);
 		}
 	}
 
@@ -531,7 +555,7 @@ public class ByteCode {
 		/// length of the function (used for dumps)
 		public required int len { get; init; }
 		/// friendly name for the function
-		public required string name { get; init; }
+		public required Str name { get; init; }
 
 		/// the number of args the function expectes
 		public required int args { get; init; }
@@ -542,16 +566,18 @@ public class ByteCode {
 		/// the register indices in the parent function that correspond to the upvalues
 		public required int[] upvalues { get; init; }
 
-		public override string debug_name => this.name;
+		public override Str debug_name => this.name;
 		public override bool hide_from_trace => false;
 	}
 
-	public readonly record struct FormatString(string prefix, FormatString.Segment[] segments) {
-		public readonly record struct Segment(string? fmt, SingleReg reg, string suffix);
+	public readonly record struct FormatString(Str prefix, FormatString.Segment[] segments) {
+		public readonly record struct Segment(Str? fmt, SingleReg reg, Str suffix);
 	}
 
+	/// the script this bytecode belongs to
+	public required Script script { get; init; }
 	/// name of the root chunk
-	public required string chunk_name { get; init; }
+	public required Str chunk_name { get; init; }
 	/// all the instructions
 	public required Inst[] instructions { get; init; }
 	/// constants referenced in this chunk
@@ -565,11 +591,11 @@ public class ByteCode {
 	// todo: add when compiler is real (ensure that we can still read source info from bytecode! not the source itself, but having real line numbers/etc would be neat)
 	// public required LuaSource[]? sources { get; init; }
 
-	private static readonly List<string> validation_error_buf = [];
 	/// validates that the bytecode does not violate certain contracts, returning any errors
 	public string[] validate() {
-		static void fail(int i, Inst inst, string msg) => ByteCode.validation_error_buf.Add($"[[{i:X4}] {inst}] {msg}");
-		static void regcheck(int i, Inst inst, char name, U usage, MultiReg rn, U rn_base, U rn_multi, U rn_const, int const_count) {
+		var errors = ListPool.acquire<string>();
+		void fail(int i, Inst inst, string msg) => errors.Add($"[[{i:X4}] {inst}] {msg}");
+		void regcheck(int i, Inst inst, char name, U usage, MultiReg rn, U rn_base, U rn_multi, U rn_const, int const_count) {
 			if ((usage & rn_base) != 0) {
 				if ((usage & rn_multi) == 0 && rn.len != 1) fail(i, inst, "usage: $r{name} has been passed a number of registers != 1");
 				if (rn.is_const) {
@@ -594,6 +620,10 @@ public class ByteCode {
 					if (inst.a < 0 && inst.a >= this.format_strings.Length) fail(i, inst, "operand: $a refers to an out of bounds format string");
 					break;
 
+				case Inst.OpCode.LdVec:
+					if (inst.ry.len > 3) fail(i, inst, "constraint: ld.vec $ry must have 0-3 regs");
+					break;
+
 				case Inst.OpCode.LdFn:
 				case Inst.OpCode.Call:
 				case Inst.OpCode.TailCall:
@@ -610,15 +640,21 @@ public class ByteCode {
 				case Inst.OpCode.JmpFalse:
 				case Inst.OpCode.ForStep:
 					var dst = i + inst.a;
-					if (dst < 0 && dst >= this.instructions.Length) fail(i, inst, "operands: $a jumps out of bounds");
+					if (dst < 0 && dst >= this.instructions.Length) fail(i, inst, "operand: $a jumps out of bounds");
+					break;
+
+				case Inst.OpCode.IterPrep:
+					if (inst.rx.len < 3) fail(i, inst, "constraint: iter.prep $rx must have exactly 3 regs");
+					break;
+
+				case Inst.OpCode.IterStep:
+					if (inst.rx.len < 3) fail(i, inst, "constraint: iter.step $rx must have at least 3 regs");
 					break;
 			}
 		}
-		if (ByteCode.validation_error_buf.Count > 0) {
-			var errors = ByteCode.validation_error_buf.ToArray();
-			ByteCode.validation_error_buf.Clear();
-			return errors;
-		} else {
+		if (errors.Count > 0) return ListPool.release_toarray(errors);
+		else {
+			ListPool.release(errors);
 			return [];
 		}
 	}
