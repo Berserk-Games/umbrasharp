@@ -6,6 +6,8 @@ namespace UmbraSharp.Runtime.VirtualMachine;
 internal readonly record struct StackSpan(int start, int end) {
 	public readonly int len => this.end - this.start;
 
+	public readonly StackSpan sub(int offset) => offset < this.end ? (this.start + offset)..this.end : throw new Exception("offset past end");
+	public readonly StackSpan sub(int offset, int len) => offset < this.end ? (this.start + offset)..(this.start + offset + Math.Min(len, this.len)) : throw new Exception("offset past end");
 	public readonly StackSpan trim(int len) => this.start..(this.start + Math.Min(len, this.len));
 
 	public override string ToString() => this.len != 0 ? $"{this.start}..{this.end}" : "none";
@@ -17,7 +19,7 @@ internal readonly record struct StackSpan(int start, int end) {
 		}
 	}
 
-	public readonly StackSpan this[Range i] => this[i.Start.Value]..this[i.End.Value];
+	public readonly StackSpan this[Range i] => this[i.Start.GetOffset(this.len)]..this[i.End.GetOffset(this.len)];
 
 	public static implicit operator StackSpan(Range range) => new(range.Start.Value, range.End.Value);
 	public static implicit operator Range(StackSpan span) => span.start..span.end;

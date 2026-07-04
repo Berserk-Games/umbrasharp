@@ -43,30 +43,28 @@ internal sealed partial class VM {
 		public readonly Val this[int i] => this.is_const ? this.repr.as_vals[i] : this.repr.as_regs[i].value;
 	}
 
+	// todo: real error handling (unwinding)
 	public Yield? execution_loop() {
-	// todo: iterate over top of callstack instructions (if the top is a native fn, return)
-	// todo: real error handling
-
 	different_function:
 		ref var frame = ref this.call_stack.peek;
-		Statistics.trace($"-- different function: {frame.fn.debug_name} --");
+		Statistics.trace($"different function: {frame.fn.debug_name}");
 		if (frame.fn is not ByteCode.LuaFnProto proto) return null;
 		var bytecode = proto.bytecode;
 
 		while (true) {
 			var ip = frame.ip++;
-			var inst = bytecode.instructions[ip];
+			ref var inst = ref bytecode.instructions[ip];
 
 			Statistics.trace($"{VM.dbg_span(this.ex_vararg)} // {VM.dbg_span(this.regs.data.AsSpan()[frame.bp..this.base_top])} // {VM.dbg_span(this.ex_varret)}");
 			Statistics.trace_inst(frame.fn.debug_name, ip, inst);
 
 			switch (inst.opcode) {
 				case OpCode.Halt: {
-						throw new Exception(this.ex_fmt(bytecode, inst.a));
+						throw new Exception(this.ex_fmt(bytecode, inst.a).ToString());
 					}
 				case OpCode.Debug: {
 						// todo: debugger
-						Console.Error.WriteLine($"[debug] {this.ex_fmt(bytecode, inst.a)}");
+						Console.Error.WriteLine($"debug >> {this.ex_fmt(bytecode, inst.a)}");
 						break;
 					}
 
@@ -96,9 +94,12 @@ internal sealed partial class VM {
 						// revisit this instruction until nothing left to close
 						// this is a pretty simple way to do this
 						frame.ip--;
-						// todo: call __close metamethod if present, otherwise error
-						throw new NotImplementedException("close");
-						break;
+
+						var meta = reg.value.meta(MetaMethod.__close);
+						if (meta.is_nil) throw new Exception("variable 'a' got a non-closable value");
+						if (!meta.is_function) RuntimeError.attempt_to_what<None>("call", meta.ty.name(), "metamethod 'close'");
+						this.begin_call(meta.assume_function, this.ex_r2ss(inst.rx), false, default, false, false);
+						goto different_function;
 					}
 				case OpCode.Copy: {
 						this.ex_regs_or_consts(inst.ry).copy_to(this.ex_regs(inst.rx));
@@ -165,7 +166,7 @@ internal sealed partial class VM {
 						var varargs = this.ex_vararg;
 						if (idx.is_string && idx.assume_string == "n") dst.value = varargs.Length;
 						else if (idx.is_number) {
-							if (idx.as_long_try is not long i || i < 1 || i > varargs.Length) dst.value = default;
+							if (idx.assume_number.as_long_try is not long i || i < 1 || i > varargs.Length) dst.value = default;
 							else dst.value = varargs[(int)i - 1].value;
 						} else dst.value = default;
 						break;
@@ -189,23 +190,23 @@ internal sealed partial class VM {
 					}
 
 				case OpCode.Jmp: {
-						frame.ip += inst.a;
+						frame.ip += inst.a - 1;
 						break;
 					}
 				case OpCode.JmpDyn: {
-						frame.ip += (int)this.ex_val(inst.rx).as_long_trunc;
+						frame.ip += (int)this.ex_val(inst.rx).as_number.as_long_trunc - 1;
 						break;
 					}
 				case OpCode.JmpNil: {
-						if (this.ex_val(inst.rx).is_nil) frame.ip += inst.a;
+						if (this.ex_val(inst.rx).is_nil) frame.ip += inst.a - 1;
 						break;
 					}
 				case OpCode.JmpTrue: {
-						if (this.ex_val(inst.rx).is_truthy) frame.ip += inst.a;
+						if (this.ex_val(inst.rx).is_truthy) frame.ip += inst.a - 1;
 						break;
 					}
 				case OpCode.JmpFalse: {
-						if (!this.ex_val(inst.rx).is_truthy) frame.ip += inst.a;
+						if (!this.ex_val(inst.rx).is_truthy) frame.ip += inst.a - 1;
 						break;
 					}
 				case OpCode.Ret: {
@@ -216,7 +217,7 @@ internal sealed partial class VM {
 					}
 
 				case OpCode.Call: {
-						this.begin_call(bytecode.funcs[inst.a], this.ex_r2ss(inst.rx), this.ex_r2ss(inst.ry), inst.alt);
+						this.begin_call(bytecode.funcs[inst.a], this.ex_r2ss(inst.rx), true, this.ex_r2ss(inst.ry), inst.alt, true);
 
 						this.dbg.advance(inst.ToString());
 						goto different_function;
@@ -224,14 +225,14 @@ internal sealed partial class VM {
 				case OpCode.CallDyn: {
 						var fn = this.ex_reg(inst.rx).value;
 						// todo: __call
-						if (!fn.is_function) throw new Exception($"attempt to call a {fn.type_name} value ({this.ex_fmt(bytecode, inst.a)})");
-						this.begin_call(fn.assume_function, this.ex_r2ss(inst.ry), this.ex_r2ss(inst.rz), inst.alt);
+						if (!fn.is_function) throw new Exception($"attempt to call a {fn.ty.name()} value ({this.ex_fmt(bytecode, inst.a)})");
+						this.begin_call(fn.assume_function, this.ex_r2ss(inst.ry), true, this.ex_r2ss(inst.rz), inst.alt, true);
 
 						this.dbg.advance(inst.ToString());
 						goto different_function;
 					}
 				case OpCode.TailCall: {
-						this.begin_tail_call(bytecode.funcs[inst.a], this.ex_r2ss(inst.rx));
+						this.begin_tail_call(bytecode.funcs[inst.a], this.ex_r2ss(inst.rx), true);
 
 						this.dbg.advance(inst.ToString());
 						goto different_function;
@@ -239,8 +240,8 @@ internal sealed partial class VM {
 				case OpCode.TailCallDyn: {
 						var fn = this.ex_reg(inst.rx).value;
 						// todo: __call
-						if (!fn.is_function) throw new Exception($"attempt to call a {fn.type_name} value ({this.ex_fmt(bytecode, inst.a)})");
-						this.begin_tail_call(fn.assume_function, this.ex_r2ss(inst.ry));
+						if (!fn.is_function) throw new Exception($"attempt to call a {fn.ty.name()} value ({this.ex_fmt(bytecode, inst.a)})");
+						this.begin_tail_call(fn.assume_function, this.ex_r2ss(inst.ry), true);
 
 						this.dbg.advance(inst.ToString());
 						goto different_function;
@@ -296,30 +297,100 @@ internal sealed partial class VM {
 					throw new Exception("todo");
 					break;
 
-				case OpCode.ForPrep:
-					// todo: real errors
-					if (!this.ex_val(inst.ry).is_number) throw new Exception("bad 'for' limit");
-					if (!this.ex_val(inst.rz).is_number) throw new Exception("bad 'for' step");
-					if (!this.ex_reg(inst.rx).value.is_number) throw new Exception("bad 'for' initial value");
-					break;
-				case OpCode.ForStep:
-					// todo: longs?
-					ref var iter = ref this.ex_reg(inst.rx);
-					var limit = this.ex_val(inst.ry).as_double;
-					var step = this.ex_val(inst.rz).as_double;
-					var val = iter.value.as_double + step;
-					iter = new(new(val));
-					if ((val > 0) ? val <= limit : val >= limit) frame.ip += inst.a;
-					break;
-				case OpCode.IterPrep:
-					ref var iterator = ref this.ex_reg(inst.rx);
-					if (!iterator.value.is_table) break;
-					ref var context = ref this.ex_reg(inst.ry);
-					ref var index = ref this.ex_reg(inst.rz);
+				case OpCode.ForPrep: {
+						var limit = this.ex_val(inst.ry);
+						if (!limit.is_number) RuntimeError.expected_what<None>(Val.Ty.Number.name(), limit.ty.name(), "bad 'for' limit");
+						var step = this.ex_val(inst.rz);
+						if (!step.is_number) RuntimeError.expected_what<None>(Val.Ty.Number.name(), step.ty.name(), "bad 'for' step");
+						var initial_value = this.ex_reg(inst.rx).value;
+						if (!initial_value.is_number) RuntimeError.expected_what<None>(Val.Ty.Number.name(), initial_value.ty.name(), "bad 'for' initial value");
+						break;
+					}
+				case OpCode.ForStep: {
+						// todo: longs?
+						ref var iter = ref this.ex_reg(inst.rx);
+						var limit = this.ex_val(inst.ry).as_number.as_double;
+						var step = this.ex_val(inst.rz).as_number.as_double;
+						var val = iter.value.as_number.as_double + step;
+						iter = new(new(val));
+						if ((val > 0) ? val <= limit : val >= limit) frame.ip += inst.a - 1;
+						break;
+					}
+				case OpCode.IterPrep: {
+						var data = this.ex_regs(inst.rx);
 
-					throw new Exception("todo");
-					break;
+						var iterable = data[0].value;
 
+						{
+							var iter = Val.NIL;
+							if (bytecode.script.config.luau_support && iterable.meta(MetaMethod.__iter) is Val meta_iter && !meta_iter.is_nil) {
+								iter = meta_iter;
+								if (!iter.is_function) RuntimeError.attempt_to_what<None>("call", iter.ty.name(), "metamethod 'iter'");
+							} else if (bytecode.script.config.moonsharp_support && iterable.meta(MetaMethod.__iterator) is Val meta_iterator && !meta_iterator.is_nil) {
+								iter = meta_iterator;
+								if (!iter.is_function) RuntimeError.attempt_to_what<None>("call", iter.ty.name(), "metamethod 'iterator'");
+							}
+
+							if (!iter.is_nil) {
+								var span = this.ex_r2ss(inst.rx);
+								this.begin_call(iter.assume_function, span, false, span, false, false);
+								goto different_function;
+							}
+						}
+
+						if (
+							!iterable.is_table
+							|| !iterable.meta(MetaMethod.__call).is_nil
+							|| bytecode.script.config.default_generalized_iteration == Script.Config.GeneralizedIteration.None
+						) break;
+
+						data[0].value = Val.light_userdata(-1, Table.generalized_iteration_marker, null);
+						data[1].value = iterable;
+
+						break;
+
+					}
+				case OpCode.IterStep: {
+						// span.start: iter, span.start + 1: context, span.start + 2: index, span.start + 3: value1, ..., span.end: valueN
+						// |- min span ---------------------------------------------------|
+						// |- __call args ------------------------------------------------| span.sub(0, 3)
+						//                   |- function args ----------------------------| span.sub(1, 3)
+						//                                            |- ret_dst --------------------------------------------------------| span.sub(2)
+						var data = this.ex_regs(inst.rx);
+
+						var fn = data[0].value;
+						if (fn.is_lightuserdata && object.ReferenceEquals(fn.assume_lightuserdata_heap, Table.generalized_iteration_marker)) {
+							var (i, pair) = data[1].value.assume_table.internal_next((int)fn.assume_lightuserdata_stack);
+							Console.WriteLine($"builtin iteration, idx {fn.assume_lightuserdata_stack} -> {i}, [{pair.key}] = {pair.val}");
+							data[0].value = Val.light_userdata(i, Table.generalized_iteration_marker, null);
+							switch (bytecode.script.config.default_generalized_iteration) {
+								case Script.Config.GeneralizedIteration.None:
+									RuntimeError.attempt_to<None>("call", data[1].value.ty.name());
+									break;
+								case Script.Config.GeneralizedIteration.Luau:
+									data[2] = new(pair.key);
+									if (data.Length <= 4) data[3] = new(pair.val);
+									if (data.Length <= 5) data[4..].Clear();
+									break;
+								case Script.Config.GeneralizedIteration.MoonSharp:
+									data[2] = new(pair.val);
+									if (data.Length <= 4) data[3..].Clear();
+									break;
+							}
+							break;
+						}
+						var span = this.ex_r2ss(inst.rx);
+						if (fn.is_function) {
+							this.begin_call(fn.assume_function, span.sub(1, 3), false, span.sub(2), false, false);
+							goto different_function;
+						} else {
+							var meta = fn.meta(MetaMethod.__call);
+							if (meta.is_nil) RuntimeError.attempt_to<None>("call", fn.ty.name());
+							if (!meta.is_function) RuntimeError.attempt_to_what<None>("call", meta.ty.name(), "metamethod 'call'");
+							this.begin_call(meta.assume_function, span.sub(0, 3), false, span.sub(2), false, false);
+							goto different_function;
+						}
+					}
 					// default:
 					// 	throw new InvalidOperationException($"unknown opcode {inst.opcode} (0x{(int)inst.opcode:02x})");
 			}
@@ -328,19 +399,17 @@ internal sealed partial class VM {
 		}
 	}
 
-	private static StringBuilder dbg_span_builder = new();
 	private static string dbg_span(ReadOnlySpan<Reg> span) {
-		VM.dbg_span_builder.Append('[');
+		var b = StringBuilderPool.acquire();
+		b.Append('[');
 		var comma = false;
 		foreach (var reg in span) {
 			if (!comma) comma = true;
-			else VM.dbg_span_builder.Append(", ");
-			VM.dbg_span_builder.Append(reg);
+			b.Append(", ");
+			b.Append(reg);
 		}
-		VM.dbg_span_builder.Append(']');
-		var str = VM.dbg_span_builder.ToString();
-		VM.dbg_span_builder.Clear();
-		return str;
+		b.Append(']');
+		return StringBuilderPool.release_tostring(b);
 	}
 
 	private Val ex_val(ByteCode.MultiReg idx) {
@@ -348,7 +417,7 @@ internal sealed partial class VM {
 		var fn = (ByteCode.LuaFnProto)frame.fn;
 		if (idx.is_const) {
 			if (-idx.start > fn.bytecode.constants.Length) throw new IndexOutOfRangeException("out of bounds constant reference");
-			return fn.bytecode.constants[-idx.start - 1];
+			return fn.bytecode.constants.AsSpan()[-idx.start - 1];
 		} else {
 			if (idx.start >= fn.args + fn.extra_regs) throw new IndexOutOfRangeException("out of bounds register reference");
 			return this.regs.data[frame.bp + idx.start].value;
@@ -366,7 +435,8 @@ internal sealed partial class VM {
 	private ReadOnlySpan<Val> ex_consts(ByteCode.MultiReg r) {
 		var frame = this.call_stack.peek;
 		var bytecode = ((ByteCode.LuaFnProto)frame.fn).bytecode;
-		return bytecode.constants.AsSpan()[r.start..(r.start + r.len)];
+		var start = -r.start - 1;
+		return bytecode.constants.AsSpan()[start..(start + r.len)];
 	}
 	private ValSpan ex_regs_or_consts(ByteCode.MultiReg r) => r.is_const ? new(this.ex_consts(r)) : new(this.ex_regs(r));
 
@@ -387,21 +457,22 @@ internal sealed partial class VM {
 
 	private ReadOnlySpan<Reg> ex_varret => this.regs.data.AsSpan()[this.base_top..this.regs.top];
 
-	// todo: thread safe
-	private static readonly StringBuilder format_string_builder = new();
-
-	private string ex_fmt(ByteCode bc, int a) {
+	private Str ex_fmt(ByteCode bc, int a) {
+		// todo: call metas, probably make the return nullable (to indicate that we're calling a metamethod), then use the same repeat-this-instruction-until-done pattern as closing vars to append to a stringbuilder stored in a lightuserdata
 		var fmt = bc.format_strings[a];
 		if (fmt.segments.Length == 0) return fmt.prefix;
-		VM.format_string_builder.Append(fmt.prefix);
+
+		var buf = StringBuilderPool.acquire();
+		buf.Append(fmt.prefix.span);
 		foreach (var seg in fmt.segments) {
 			// todo: format specifiers
 			// standard string.format specifiers, plus .., which coerces like .. does
-			VM.format_string_builder.Append(this.ex_val(seg.reg));
-			VM.format_string_builder.Append(seg.suffix);
+			buf.Append(this.ex_val(seg.reg));
+			buf.Append(seg.suffix.span);
 		}
-		var res = VM.format_string_builder.ToString();
-		VM.format_string_builder.Clear();
+		var res = buf.ToString();
+		buf.Clear();
+
 		return res;
 	}
 }

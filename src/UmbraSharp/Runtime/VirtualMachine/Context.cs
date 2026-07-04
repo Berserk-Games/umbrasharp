@@ -1,6 +1,6 @@
 namespace UmbraSharp.Runtime.VirtualMachine;
 
-public sealed class Slot(Val value): UserData(0) {
+public sealed class Slot(Val value) {
 	public Val value = value;
 }
 
@@ -23,12 +23,12 @@ internal sealed partial class VM {
 		/// whether the rest of the returns should be pushed onto the varret stack
 		public readonly required bool ret_dst_var { get; init; }
 
-		/// whether this frame returns directly to the CLR
-		public required bool root;
+		/// whether this frame should not clobber varret
+		public required bool clobber_varret;
 		/// instruction pointer for lua code
 		public required int ip;
 		/// current index of to-be-closed variables, if we are currently closing
-		/// starts at 0 (either the zeroth register for a `close` instruction, or zeroth register in a function for a `ret`)
+		/// starts at 0 (either the zeroth register in a `close` instruction's $rx, or zeroth register in a function for a `ret`)
 		public required int close_index;
 	}
 
@@ -96,12 +96,12 @@ internal sealed partial class VM {
 			ret_dst = default,
 			ret_dst_var = true,
 
-			root = true,
+			clobber_varret = false,
 			ip = -1,
 			close_index = 0,
 		});
 
-		this.nested_call(fn, base_top..this.regs.top, base_top..base_top, true);
+		this.nested_call(fn, base_top..this.regs.top, false, base_top..base_top, true, true);
 
 		this.call_stack.pop();
 
@@ -110,36 +110,36 @@ internal sealed partial class VM {
 		return base_top..this.regs.top;
 	}
 
-	public void nested_call(Fn fn, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
+	public void nested_call(Fn fn, StackSpan arg_src, bool arg_src_var, StackSpan ret_dst, bool ret_dst_var, bool clobber_varret) {
 		// todo: handle yield results (probably split yieldable calls into another function that can take a continuation)
-		this.begin_call(fn, arg_src, ret_dst, ret_dst_var);
+		this.begin_call(fn, arg_src, arg_src_var, ret_dst, ret_dst_var, clobber_varret);
 		this.execution_loop();
 	}
 
-	private void begin_call(Fn fn, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
+	private void begin_call(Fn fn, StackSpan arg_src, bool arg_src_var, StackSpan ret_dst, bool ret_dst_var, bool clobber_varret) {
 		switch (fn.proto) {
 			case NativeFnProto proto:
-				this.native_call(proto, fn.extra, arg_src, ret_dst, ret_dst_var);
+				this.native_call(proto, fn.extra, arg_src, arg_src_var, ret_dst, ret_dst_var, clobber_varret);
 				break;
 			case ByteCode.LuaFnProto proto:
-				this.lua_begin_call(proto, (Slot[])fn.extra!, arg_src, ret_dst, ret_dst_var);
+				this.lua_begin_call(proto, (Slot[])fn.extra!, arg_src, arg_src_var, ret_dst, ret_dst_var, clobber_varret);
 				break;
 		}
 	}
 
 	// todo: tailcalling native functions should not need this copy
-	private void begin_tail_call(Fn fn, StackSpan arg_src) {
+	private void begin_tail_call(Fn fn, StackSpan arg_src, bool arg_src_var) {
 		this.dbg.advance("begin_tail_call: before");
-		var src = new StackSpanVar(arg_src, this.base_top..this.regs.top);
+		var src = new StackSpanVar(arg_src, arg_src_var ? this.base_top..this.regs.top : default);
 		var frame = this.call_stack.pop();
 		var base_top = this.base_top;
 		this.regs.copy_to_unlink(src, new StackSpanVar(default, base_top..(base_top + src.len)));
 		this.dbg.advance("begin_tail_call: precall");
-		this.begin_call(fn, 0..0, frame.ret_dst, frame.ret_dst_var);
+		this.begin_call(fn, 0..0, true, frame.ret_dst, frame.ret_dst_var, frame.clobber_varret);
 		this.dbg.advance("begin_tail_call: after");
 	}
 
-	public int native_call(NativeFnProto fn, object? extra, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
+	public int native_call(NativeFnProto fn, object? extra, StackSpan arg_src, bool arg_src_var, StackSpan ret_dst, bool ret_dst_var, bool clobber_varret) {
 		this.dbg.advance("native_call: before");
 
 		var base_top = this.base_top;
@@ -152,19 +152,19 @@ internal sealed partial class VM {
 			ret_dst = ret_dst,
 			ret_dst_var = ret_dst_var,
 
-			root = false,
+			clobber_varret = clobber_varret,
 			ip = -1,
 			close_index = 0,
 		});
 
 		NativeFnProto.CallContext ctx = new(
 			this,
-			new(arg_src, base_top..this.regs.top),
+			new(arg_src, arg_src_var ? base_top..this.regs.top : default),
 			ret_dst,
 			ret_dst_var
 		);
 		for (var i = base_top; i < this.regs.top; i++) this.dbg.notify_pop(i);
-		this.regs.top = base_top;
+		if (clobber_varret) this.regs.top = base_top;
 		this.dbg.advance("native_call: precall");
 		// todo: figure out how native functions should yield (probably a flag in their CallContext so they can just `ctx.yielding(1) ctx.yielding(2) ctx.yield_continue(continuation, continuation_extra)`)
 		fn.callee.Invoke(ref ctx, extra);
@@ -178,12 +178,12 @@ internal sealed partial class VM {
 		return ctx.returned;
 	}
 
-	public void lua_begin_call(ByteCode.LuaFnProto fn, Slot[] upvars, StackSpan arg_src, StackSpan ret_dst, bool ret_dst_var) {
+	public void lua_begin_call(ByteCode.LuaFnProto fn, Slot[] upvars, StackSpan arg_src, bool arg_src_var, StackSpan ret_dst, bool ret_dst_var, bool clobber_varret) {
 		this.dbg.advance("lua_call: before");
 
 		var base_top = this.base_top;
 
-		var src = new StackSpanVar(arg_src, base_top..this.regs.top);
+		var src = new StackSpanVar(arg_src, arg_src_var ? base_top..this.regs.top : default);
 		var num_varargs = fn.varargs ? src.len - fn.args : 0;
 
 		this.push_call_stack(new StackFrame {
@@ -194,7 +194,7 @@ internal sealed partial class VM {
 			ret_dst = ret_dst,
 			ret_dst_var = ret_dst_var,
 
-			root = false,
+			clobber_varret = clobber_varret,
 			ip = fn.addr,
 			close_index = 0,
 		});
@@ -218,7 +218,7 @@ internal sealed partial class VM {
 
 		this.call_stack.pop();
 		var old_top = this.regs.top;
-		this.regs.top = this.base_top;
+		this.regs.top = frame.clobber_varret ? this.base_top : frame.bp - frame.varargs;
 		var dst = new StackSpanVar(
 			frame.ret_dst,
 			frame.ret_dst_var ? this.regs.alloc(src.len - frame.ret_dst.len) : default
