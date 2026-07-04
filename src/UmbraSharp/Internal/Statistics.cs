@@ -88,7 +88,7 @@ public static class Statistics {
 	}
 
 	[Conditional("DEBUG")]
-	internal static void trace_inst(string fn, int idx, ByteCode.Inst inst) {
+	internal static void trace_inst(Str fn, int idx, ByteCode.Inst inst) {
 		if (Statistics.full_trace) Statistics.trace($"inst [{fn}+{idx:X4}] {inst}");
 	}
 

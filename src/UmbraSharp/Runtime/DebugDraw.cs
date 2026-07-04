@@ -139,7 +139,7 @@ internal class Dbg {
 			}
 			this.render.Graphics.FillText(
 				bp - offset - new Point(8, 30),
-				frame.fn.debug_name,
+				frame.fn.debug_name.ToString(),
 				Dbg.FONT,
 				col
 			);

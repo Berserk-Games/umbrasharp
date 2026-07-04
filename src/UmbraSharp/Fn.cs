@@ -5,10 +5,10 @@ namespace UmbraSharp;
 
 public abstract class FnProto {
 	public abstract bool hide_from_trace { get; }
-	public abstract string debug_name { get; }
+	public abstract Str debug_name { get; }
 }
 
-public sealed class NativeFnProto(NativeFnProto.Callee callee, string name, bool hide_from_trace = false): FnProto {
+public sealed class NativeFnProto(NativeFnProto.Callee callee, Str name, bool hide_from_trace = false): FnProto {
 	public struct CallContext {
 		internal readonly VM vm;
 		internal readonly StackSpanVar arg_src;
@@ -56,7 +56,7 @@ public sealed class NativeFnProto(NativeFnProto.Callee callee, string name, bool
 	public delegate void Callee(ref CallContext ctx, object? extra);
 
 	public readonly Callee callee = callee;
-	public override string debug_name { get; } = name;
+	public override Str debug_name { get; } = name;
 	public override bool hide_from_trace { get; } = hide_from_trace;
 }
 
@@ -69,7 +69,7 @@ public readonly struct Fn {
 		this.extra = extra;
 	}
 
-	public Fn(NativeFnProto proto, object? extra) : this((FnProto)proto, extra) { }
+	public Fn(NativeFnProto proto, object? extra = null) : this((FnProto)proto, extra) { }
 
 	public Fn(ByteCode.LuaFnProto proto, Slot[] upvalues) : this((FnProto)proto, upvalues) { }
 }
