@@ -88,7 +88,7 @@ internal sealed partial class VM {
 
 		var base_top = this.regs.top - args;
 
-		this.call_stack.push(new StackFrame {
+		this.push_call_stack(new StackFrame {
 			fn = VM.ROOT_CALL_FN,
 			extra = null,
 			varargs = 0,
@@ -144,7 +144,7 @@ internal sealed partial class VM {
 
 		var base_top = this.base_top;
 
-		this.call_stack.push(new StackFrame {
+		this.push_call_stack(new StackFrame {
 			fn = fn,
 			extra = extra,
 			varargs = 0,
@@ -186,7 +186,7 @@ internal sealed partial class VM {
 		var src = new StackSpanVar(arg_src, base_top..this.regs.top);
 		var num_varargs = fn.varargs ? src.len - fn.args : 0;
 
-		this.call_stack.push(new StackFrame {
+		this.push_call_stack(new StackFrame {
 			fn = fn,
 			extra = upvars,
 			varargs = num_varargs,
@@ -231,5 +231,10 @@ internal sealed partial class VM {
 		this.regs[this.regs.top..old_top].Clear();
 
 		this.dbg.advance("lua_ret: after");
+	}
+
+	private void push_call_stack(StackFrame frame) {
+		if (this.call_stack.top >= VM.MAX_CALL_STACK_SIZE) throw new Exception("lua call stack overflow");
+		this.call_stack.push(frame);
 	}
 }
