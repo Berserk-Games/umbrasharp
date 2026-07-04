@@ -2,9 +2,11 @@ using UmbraSharp.Internal;
 
 namespace UmbraSharp;
 
-public abstract class UserData(int uservalue_cap) {
-	private Val[]? uservalues = null;
-	private readonly int uservalue_cap = uservalue_cap;
+public abstract class UserData(Table? metatable) {
+	public Table? metatable = metatable;
+
+	public Val[]? uservalues = null;
+	public virtual int uservalue_cap => 1;
 
 	public Val get_uservalue(int i) => this.uservalues?[i] ?? default;
 	public void set_uservalue(int i, Val val) {
@@ -20,6 +22,6 @@ public abstract class UserData(int uservalue_cap) {
 	// todo: methods
 }
 
-public sealed class AnyUserData<T>(): UserData(1) {
+public sealed class AnyUserData<T>(Table? metatable): UserData(metatable) {
 	// todo: userdata wrapper for any type, will need work on method resolution once that's implemented for normal userdata
 }
