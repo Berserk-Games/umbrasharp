@@ -51,9 +51,10 @@ static file class Helpers {
 	}
 
 	public static int? integral(Val key) {
-		if (key.is_long) return checked((int)key.assume_long_bits);
 		if (!key.is_number) return null;
-		var num = key.assume_double_bits;
+		var n = key.assume_number;
+		if (!n.is_double) return checked((int)n.assume_long);
+		var num = n.assume_double;
 		var integral = (int)num;
 		return num == integral ? integral : null;
 	}
@@ -68,31 +69,11 @@ static file class Helpers {
 	}
 }
 
-file ref struct OptionRef<T> {
-	public bool present;
-	public ref T reference;
-
-	public OptionRef(ref T reference) {
-		this.present = true;
-		this.reference = ref reference;
-	}
-}
-
 // can't use a Dictionary, since we can't implement `next`, so we're reimplementing luau's table implementation
 
 public sealed class Table {
 	internal const int MAX_BITS = 26;
 	internal const int MAX_SIZE = 1 << 26;
-
-	/// metamethods that we'd like to avoid a metamethod lookup for if they aren't present
-	internal enum FastMeta: byte {
-		__index = 0,
-		__newindex = 1,
-		__len = 2,
-		__eq = 3,
-		__iter = 4,
-		__iterator = 5,
-	}
 
 	private record struct Entry(uint key_hash, Val key, Val val, int next_offset) {
 		public static implicit operator Pair(Entry entry) => new(entry.key, entry.val);
@@ -104,20 +85,21 @@ public sealed class Table {
 	// 	public Pair Current =>
 	// }
 
+	internal static readonly object generalized_iteration_marker = new();
+
 	public bool frozen = false;
 
 	public Table? metatable;
 
-	private int? boundary = 0;
+	private int? boundary_cache = 0;
 
-	/// a cache of which metamethods are missing, optimizing for metamethods *not* being present
-	/// when a metamethod lookup misses, it's added to this cache so further attempts dont do lookups
-	/// then this cache is invalidated when the table is modified
-	private byte missing_meta = (byte)0xff;
+	/// an array of values for metamethod keys in *this table* (ie. this is the metatable)
+	/// see meta()
+	private Val?[]? meta_cache = null;
 
 	public int raw_len {
 		get {
-			if (this.boundary.HasValue) return this.boundary.Value;
+			if (this.boundary_cache.HasValue) return this.boundary_cache.Value;
 			return 0;
 		}
 	}
@@ -131,15 +113,15 @@ public sealed class Table {
 	}
 
 	public Val raw_get(Val key) {
-		if (this.index(key) is not int idx) return default;
+		if (this.internal_index(key) is not int idx) return default;
 		return idx < 0 ? this.array[-idx - 1] : this.hash[idx].val;
 	}
 
 	public void raw_set(Val key, Val val) {
 		this.assert_mutable();
-		this.missing_meta = 0;
+		this.meta_cache?.AsSpan().Clear();
 
-		if (this.index(key) is int idx) {
+		if (this.internal_index(key) is int idx) {
 			if (idx < 0) this.array[-idx - 1] = val;
 			else this.hash[idx].val = val;
 			return;
@@ -148,16 +130,8 @@ public sealed class Table {
 		this.new_key(key, val);
 	}
 
-	public int internal_index_find(Val key) {
-		if (key.is_nil) return -1;
-		if (this.index(key) is not int idx) throw new Exception("invalid key to 'next'");
-		return idx < 0 ? -idx - 1 : idx + this.array.Length;
-	}
-
-	// public Val? internal_index_next(int idx) {}
-
 	public Pair next(Val key) {
-		var i = this.internal_index_find(key);
+		var i = key.is_nil ? -1 : this.internal_index(key) ?? throw new Exception("invalid key to 'next'");
 		for (i++; i < this.array.Length; i++) {
 			var val = this.array[i];
 			if (!val.is_nil) return new(i + 1, val);
@@ -171,25 +145,34 @@ public sealed class Table {
 
 	public void clear() {
 		this.assert_mutable();
-		this.missing_meta = 0xff;
-		this.boundary = null;
+		this.boundary_cache = null;
+		this.meta_cache?.AsSpan().Fill(Val.NIL);
 		this.array.AsSpan().Clear();
 		this.hash.AsSpan().Clear();
 		this.hp_last_free = 0;
 	}
 
-	public Table clone() => new() {
+	public Table clone(bool? as_readonly = null) => new() {
+		frozen = as_readonly ?? this.frozen,
 		metatable = this.metatable,
-		// todo
-		boundary = this.boundary,
+		boundary_cache = this.boundary_cache,
+		meta_cache = this.meta_cache != null ? Helpers.array_clone(this.meta_cache) : null,
+		array = Helpers.array_clone(this.array),
+		hash = Helpers.array_clone(this.hash),
+		hp_last_free = this.hp_last_free,
 	};
 
-	internal Val fast_meta(FastMeta meta) {
-		var bits = (byte)(1 << (byte)meta);
-		if ((this.missing_meta & bits) != 0) return default;
-		var val = this.raw_get(meta.ToString());
-		if (val.is_nil) this.missing_meta |= bits;
-		return val;
+	internal Val meta(MetaMethod meta) {
+		if (this.meta_cache is not Val?[] cache) {
+			cache = Helpers.array_alloc<Val?>((int)MetaMethod.VARIANTS);
+			this.meta_cache = cache;
+		}
+
+		if (cache[(int)meta] is Val val) return val;
+
+		var res = this.raw_get(meta.ToString());
+		cache[(int)meta] = res;
+		return res;
 	}
 
 	#region internal
@@ -198,18 +181,31 @@ public sealed class Table {
 		if (this.frozen) throw new Exception("attempt to modify a readonly table");
 	}
 
-	/// <summary>returns the internal index of a key (zero or positive for hash index (this.hash[idx]), less than zero for negated array index (this.array[-idx - 1])) or null if not found</summary>
-	private int? index(Val key) {
-		if (this.ap_idx(key) is int ap) return -ap;
+	public int? internal_index(Val key) {
+		if (this.ap_idx(key) is int ap) return ap - 1;
 		if (this.hash.Length == 0) return null;
 		var i = this.hp_main_position(key.GetHashCode());
 		var hash = this.hash;
 		while (true) {
 			ref var entry = ref hash[i];
-			if (entry.key.raw_eq(key)) return i;
+			if (entry.key.raw_eq(key)) return i + this.array.Length;
 			if (entry.next_offset == 0) return null;
 			i += entry.next_offset;
 		}
+	}
+
+	public Val internal_get(int i) => i < this.array.Length ? this.array[i] : this.hash[i].val;
+
+	public (int i, Pair) internal_next(int i) {
+		for (i++; i < this.array.Length; i++) {
+			var val = this.array[i];
+			if (!val.is_nil) return (i, new(i + 1, val));
+		}
+		for (i -= this.array.Length; i < this.hash.Length; i++) {
+			var entry = this.hash[i];
+			if (!entry.val.is_nil) return (i + this.array.Length, entry);
+		}
+		return default;
 	}
 
 	private void rehash(Val extra) {
@@ -225,7 +221,7 @@ public sealed class Table {
 		}
 
 		// compute array size
-		var num_to_array = this.ap_compute_sizes(nums, ref array);
+		var num_to_array = Table.ap_compute_sizes(nums, ref array);
 		var hash = total - num_to_array;
 
 		// adjust array sie
@@ -244,7 +240,7 @@ public sealed class Table {
 
 	private void resize(int array, int hash) {
 		Statistics.trace($"resizing table to {array},{hash}");
-		if (array > Table.MAX_SIZE || hash > Table.MAX_SIZE) Errors.table_overflow();
+		if (array > Table.MAX_SIZE || hash > Table.MAX_SIZE) RuntimeError.table_overflow();
 		var old_array = this.array;
 		var old_hash = this.hash;
 
@@ -360,7 +356,7 @@ public sealed class Table {
 		return total;
 	}
 
-	private int ap_compute_sizes(Span<int> nums, ref int array) {
+	private static int ap_compute_sizes(Span<int> nums, ref int array) {
 		var num_to_array = 0;
 		var num_lt_twotoi = 0;
 		var optimal_array_size = 0;
@@ -389,8 +385,8 @@ public sealed class Table {
 	}
 
 	private void ap_resize(int size) {
-		if (size > Table.MAX_SIZE) Errors.table_overflow();
-		this.array = Helpers.array_realloc<Val>(this.array, size);
+		if (size > Table.MAX_SIZE) RuntimeError.table_overflow();
+		this.array = Helpers.array_realloc(this.array, size);
 	}
 
 	#endregion
@@ -406,7 +402,7 @@ public sealed class Table {
 		if (size == 0) this.hash = [];
 		else {
 			var lsize = Helpers.ceillog2(size);
-			if (lsize > Table.MAX_BITS) Errors.table_overflow();
+			if (lsize > Table.MAX_BITS) RuntimeError.table_overflow();
 			size = 1 << lsize;
 			this.hash = new Entry[size];
 			this.hp_last_free = size;
