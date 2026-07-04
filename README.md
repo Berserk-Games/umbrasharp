@@ -19,21 +19,22 @@ this project learns from the pain points of MoonSharp
 
 ## state of the project
 
-todo: fill all sections
+### critical
 
-### interpreter
+#### interpreter
 
-- [ ] data types (excl. coroutines)
-- [ ] instruction set
+- [x] data types (excl. coroutines)
+- [x] instruction set
 - [ ] coroutines
 
-### compiler
+#### compiler
 
+- [x] lexing
 - [ ] parsing
 - [ ] generation of correct bytecode
 - [ ] optimizing (using more of the instruction set and being smarter about its behavior)
 
-### stdlib
+#### stdlib
 
 - [ ] lua parity
 - [ ] figure out debug library
@@ -41,29 +42,31 @@ todo: fill all sections
 - [ ] umbrasharp specific libraries
 - [ ] yielding
 
-### command-line interface
+### non-critical
+
+#### command-line interface
 
 - [ ] rudimentary CLI
 
-### debugger
+#### debugger
 
 - [ ] comprehensive debugger protocol
 - [ ] implementation within the interpreter
 - [ ] client
 - [ ] debugger protocol documentation
 
-### testing
+#### testing
 
 - [ ] interpreter tests
 - [ ] stdlib tests
 - [ ] compiler tests
 
-### documentation
+#### documentation
 
 - [ ] API docs
 - [ ] bytecode format
 - [ ] all internal documentation
 
-### misc
+#### misc
 
 - [ ] AOT support
