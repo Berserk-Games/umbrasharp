@@ -1,5 +1,5 @@
 using System.Text;
-
+using UmbraSharp.Internal;
 using U = UmbraSharp.Runtime.ByteCode.Inst.OperandUsage;
 
 namespace UmbraSharp.Runtime;
@@ -416,7 +416,7 @@ public class ByteCode {
 			OpCode.IterPrep => "iter.prep",
 			OpCode.IterStep => "iter.step",
 
-			_ => throw new ArgumentOutOfRangeException($"unknown opcode {op} (0x{(int)op:02x})"),
+			_ => throw InternalError.invalid_enum($"unknown opcode {op} (0x{(int)op:02x})"),
 		};
 
 		public static U usage(OpCode op) {
@@ -495,7 +495,7 @@ public class ByteCode {
 				OpCode.IterPrep => (U.RX | U.RXMulti),
 				OpCode.IterStep => (U.RX | U.RXMulti),
 
-				_ => throw new ArgumentOutOfRangeException($"unknown opcode {op} (0x{(int)op:02x})"),
+				_ => throw InternalError.invalid_enum($"unknown opcode {op} (0x{(int)op:02x})"),
 			};
 #pragma warning restore IDE0047
 		}
